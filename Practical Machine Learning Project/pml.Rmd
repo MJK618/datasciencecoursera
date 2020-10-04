@@ -1,0 +1,202 @@
+---
+title: "Practical Machine Learning Project - Peer-graded Assignment: Prediction Assignment Writeup (Week 4)
+"
+author: "Jatin Kamboj"
+date: "4 October 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Practical Machine Learning Project - Peer-graded Assignment: Prediction Assignment Writeup (Week 4)
+# Part of Data Science Specialisation - John Hopkins University on Coursera
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement ??? a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data
+
+The training dataset for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test dataset are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+# Analysis
+
+Loading data:
+
+```{r load data, warning=FALSE, message=FALSE, echo=TRUE}
+
+training = read.csv("./pml-training.csv",na.strings=c("NA","#DIV/0!",""))
+testing = read.csv("./pml-testing.csv",na.strings=c("NA","#DIV/0!",""))
+
+# Data dimensions
+dim(training)
+dim(testing)
+```
+
+```{r first look, warning=FALSE, message=FALSE, eval= FALSE}
+# First look at the data
+head(training)
+head(testing)
+
+```
+
+Cross-validation will be performed by spliting the training dataset into:
+
+1) A training dataset, containing 70% of the observations. The models for prediction will be built using this dataset.
+
+2) A testing dataset, containing 30% of the observations. The accuracy of our prediction models will be evaluated using this dataset.
+
+```{r cross-validation, warning=FALSE, message=FALSE, echo=TRUE}
+# load packages
+library(caret)
+library(randomForest)
+
+# Index for training dataset (70%) and testing dataset (30%) 
+# from the pml-training data set
+set.seed(12345)
+inTrain = createDataPartition(y=training$classe,p=0.7, list=FALSE)
+
+# training dataset
+training.set = training[inTrain,]
+# testing dataset
+testing.set = training[-inTrain,]
+
+```
+
+Training and testing data consist of 160 variables. The choice of specific predictors is based on removing near zero variance predictors, with the nearZeroVar function, and also variables containing many NAs.
+
+```{r clean data, warning=FALSE, message=FALSE, echo=TRUE}
+
+# Remove near zero variance predictors
+ind.nzv = nearZeroVar(x = training, saveMetrics = T)
+
+# Remove variables with more than 50% NA values
+ind.NA = !as.logical(apply(training, 2, function(x){ mean(is.na(x)) >= 0.5}))
+
+# Cleaning data
+ind2 = ind.NA*1 + (!ind.nzv$nzv)*1
+ind3 = ind2 == 2
+sum(ind3)
+
+#View(data.frame(ind.NA, !ind.nzv$nzv, ind2, ind3))
+
+training.set = training.set[,ind3]
+testing.set = testing.set[, ind3]
+
+training.set = training.set[, -1]
+testing.set = testing.set[, -1]
+
+testing = testing[,ind3]
+testing = testing[,-1]
+
+# Coerce the data into the same type in order to avoid
+# "Matching Error" when calling random forest model, due to different levels in variables
+
+for (i in 1:length(testing) ) {
+  for(j in 1:length(training.set)) {
+    if( length( grep(names(training.set[i]), names(testing)[j]) ) == 1)  {
+      class(testing[j]) <- class(training.set[i])
+    }      
+  }      
+}
+
+# To get the same class between testing and training.set
+testing = testing[,-ncol(testing)]
+testing <- rbind(training.set[2, -58] , testing)
+testing <- testing[-1,]
+
+```
+
+We will use two approaches to create a prediction model for the values of classe variable. 
+
+Firstly prediction with trees will be attempted, using the 'rpart' method and the caret package.
+
+```{r prediction with trees, warning=FALSE, message=FALSE, echo=TRUE}
+
+# Prediction with Trees
+# Build model
+set.seed(12345)
+tree.fit = train(y = training.set$classe,
+                 x = training.set[,-ncol(training.set)],
+                 method = "rpart")
+
+# Plot classification tree
+rattle::fancyRpartPlot(
+  tree.fit$finalModel
+)
+
+# Predictions with rpart model
+pred.tree = predict(tree.fit, testing.set[,-ncol(testing.set)])
+
+# Get results (Accuracy, etc.)
+confusionMatrix(pred.tree, testing.set$classe)
+
+
+```
+
+Secondly a prediction model using random forest method will be created.
+
+```{r random forest, warning=FALSE, message=FALSE, echo=TRUE}
+
+# Prediction with Random Forest
+# Build model
+set.seed(12345)
+rf.fit = randomForest(
+  classe ~ .,
+  data = training.set,
+  ntree = 250)
+
+# Plot the Random Forests model
+plot(rf.fit)
+
+# Predict with random forest model
+pred2 = predict(
+  rf.fit,
+  testing.set[,-ncol(testing.set)]
+)
+
+# Get results (Accuracy, etc.)
+confusionMatrix(pred2, testing.set$classe)
+
+```
+
+The accuracy of the random forest model is, as expected, much higher than the rpart model, over 0.99!
+
+Random Forest model performed better and constitutes the model of choice for predicting the 20 observations of the original pml-testing.csv dataset.
+
+```{r pml-testing predictions, warning=FALSE, message=FALSE, echo=TRUE}
+
+# Get predictions for the 20 observations of the original pml-testing.csv
+
+pred.validation = predict(rf.fit, testing)
+pred.validation
+```
+
+```{r saving results, warning=FALSE, message=FALSE, echo=TRUE, eval = FALSE}
+# Saving predictions for testing dataset
+testing$pred.classe = pred.validation
+
+write.table(
+  testing,
+  file = "testing_with_predictions",
+  quote = F
+)
+
+```
+
+
+
+
+
+
+
+
+
